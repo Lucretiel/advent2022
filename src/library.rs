@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, iter::FusedIterator};
+use std::{collections::HashMap, hash::Hash, iter::FusedIterator, mem, ops::ControlFlow};
 
 use brownstone::move_builder::{ArrayBuilder, PushResult};
 
@@ -158,6 +158,13 @@ pub trait IterExt: Iterator + Sized {
     fn streaming_chunks<const N: usize>(self) -> Chunks<Self, N> {
         Chunks { iterator: self }
     }
+
+    fn streaming_windows<const N: usize>(self) -> Windows<Self, N> {
+        Windows {
+            state: State::Begin,
+            iter: self,
+        }
+    }
 }
 
 impl<T: Iterator + Sized> IterExt for T {}
@@ -184,4 +191,108 @@ macro_rules! parser {
             Ok((input, $map))
         }
     };
+}
+
+#[derive(Debug, Clone, Copy)]
+enum State<T, const N: usize> {
+    Begin,
+    Buffered([T; N]),
+    Done,
+}
+
+impl<T, const N: usize> State<T, N> {
+    fn take(&mut self) -> Self {
+        mem::replace(self, State::Done)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Windows<I: Iterator, const N: usize> {
+    iter: I,
+    state: State<I::Item, N>,
+}
+
+fn try_build_iter<I, const N: usize>(iter: I) -> Option<[I::Item; N]>
+where
+    I: IntoIterator,
+{
+    let builder = match ArrayBuilder::start() {
+        PushResult::Full(array) => return Some(array),
+        PushResult::NotFull(builder) => builder,
+    };
+
+    let result = iter
+        .into_iter()
+        .try_fold(builder, |builder, item| match builder.push(item) {
+            PushResult::Full(array) => ControlFlow::Break(array),
+            PushResult::NotFull(builder) => ControlFlow::Continue(builder),
+        });
+
+    match result {
+        ControlFlow::Continue(_) => None,
+        ControlFlow::Break(array) => Some(array),
+    }
+}
+
+fn build_iter<I, const N: usize>(iter: I) -> [I::Item; N]
+where
+    I: IntoIterator,
+{
+    try_build_iter(iter).expect("iterator wasn't long enough")
+}
+
+impl<I: Iterator, const N: usize> Iterator for Windows<I, N>
+where
+    I::Item: Clone,
+{
+    type Item = [I::Item; N];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let buffer = match self.state.take() {
+            State::Begin => try_build_iter(&mut self.iter)?,
+            State::Buffered(buffer) => buffer,
+            State::Done => return None,
+        };
+
+        if let Some(next) = self.iter.next() {
+            self.state = State::Buffered(build_iter(buffer[1..].iter().cloned().chain([next])))
+        }
+
+        Some(buffer)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self.state {
+            State::Begin => {
+                let (min, max) = self.iter.size_hint();
+                (
+                    min.saturating_sub(N - 1),
+                    max.map(|max| max.saturating_sub(N - 1)),
+                )
+            }
+            State::Buffered(_) => {
+                let (min, max) = self.iter.size_hint();
+                (
+                    min.saturating_add(1),
+                    max.and_then(|max| max.checked_add(1)),
+                )
+            }
+            State::Done => (0, Some(0)),
+        }
+    }
+}
+
+impl<I: Iterator, const N: usize> FusedIterator for Windows<I, N> where I::Item: Clone {}
+
+impl<I: ExactSizeIterator, const N: usize> ExactSizeIterator for Windows<I, N>
+where
+    I::Item: Clone,
+{
+    fn len(&self) -> usize {
+        match self.state {
+            State::Begin => self.iter.len().saturating_sub(N - 1),
+            State::Buffered(_) => self.iter.len() + 1,
+            State::Done => 0,
+        }
+    }
 }

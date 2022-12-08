@@ -169,6 +169,31 @@ impl<'a> Stacks<'a> {
                 .context(lazy_format!("failed during move #{}", n + 1))
         })
     }
+
+    pub fn apply_command_v2(&mut self, command: &Command<'a>) -> anyhow::Result<()> {
+        let mut stack = Vec::with_capacity(command.count);
+
+        let origin = self
+            .stacks
+            .get_mut(&command.origin)
+            .context("origin stack doesn't exist")?;
+
+        (0..command.count).try_for_each(|_n| {
+            origin
+                .pop()
+                .context("origin stack doesn't have enough crates")
+                .map(|moved_crate| stack.push(moved_crate))
+        })?;
+
+        let destination = self
+            .stacks
+            .get_mut(&command.destination)
+            .context("destination stack doesn't exist")?;
+
+        destination.extend(stack.iter().rev().copied());
+
+        Ok(())
+    }
 }
 
 fn parse_command(input: &str) -> IResult<&str, Command<'_>, ErrorTree<&str>> {
@@ -203,15 +228,17 @@ fn final_parse_problem(input: &str) -> Result<(Stacks<'_>, Vec<Command<'_>>), Er
     final_parser(parse_problem)(input)
 }
 
-pub fn part1(input: &str) -> anyhow::Result<impl Display + '_> {
+fn solve<'a>(
+    input: &'a str,
+    apply_command: impl Fn(&mut Stacks<'a>, &Command<'a>) -> anyhow::Result<()>,
+) -> anyhow::Result<impl Display + '_> {
     let (mut stacks, commands) = final_parse_problem(input).context("failed to parse input")?;
 
     commands
         .iter()
         .enumerate()
         .try_for_each(|(idx, command)| {
-            stacks
-                .apply_command(command)
+            apply_command(&mut stacks, command)
                 .context(lazy_format!("failed to apply command #{}", idx + 1))
         })
         .context("error while applying commands")?;
@@ -221,6 +248,10 @@ pub fn part1(input: &str) -> anyhow::Result<impl Display + '_> {
     )
 }
 
-pub fn part2(_input: &str) -> anyhow::Result<i64> {
-    anyhow::bail!("not implemented yet")
+pub fn part1(input: &str) -> anyhow::Result<impl Display + '_> {
+    solve(input, |stacks, command| stacks.apply_command(command))
+}
+
+pub fn part2(input: &str) -> anyhow::Result<impl Display + '_> {
+    solve(input, |stacks, command| stacks.apply_command_v2(command))
 }
