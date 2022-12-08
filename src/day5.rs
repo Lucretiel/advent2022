@@ -34,8 +34,9 @@ fn parse_crate(input: &str) -> IResult<&str, Crate, ErrorTree<&str>> {
     satisfy(|c| c.is_alphabetic())
         .map(Crate::new)
         .context("crate id")
-        .preceded_by(char('['))
         .terminated(char(']'))
+        .cut()
+        .preceded_by(char('['))
         .parse(input)
 }
 

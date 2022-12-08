@@ -178,7 +178,7 @@ macro_rules! parser {
                     let $bind = value;
                     let value = ();
                 )?
-                drop(value);
+                let _ = value;
             )*
 
             Ok((input, $map))
