@@ -1,4 +1,7 @@
-use std::{collections::HashMap, hash::Hash, iter::FusedIterator, mem, ops::ControlFlow};
+use std::{
+    collections::HashMap, convert::Infallible, hash::Hash, iter::FusedIterator, mem,
+    ops::ControlFlow,
+};
 
 use brownstone::move_builder::{ArrayBuilder, PushResult};
 
@@ -165,6 +168,16 @@ pub trait IterExt: Iterator + Sized {
             iter: self,
         }
     }
+
+    fn disgorge_error<T, E>(self, destination: &mut Result<(), E>) -> DisgorgeError<'_, Self, E>
+    where
+        Self: Iterator<Item = Result<T, E>>,
+    {
+        DisgorgeError {
+            iterator: self,
+            error: destination,
+        }
+    }
 }
 
 impl<T: Iterator + Sized> IterExt for T {}
@@ -296,3 +309,62 @@ where
         }
     }
 }
+
+#[derive(Debug)]
+pub struct DisgorgeError<'a, I, E> {
+    iterator: I,
+    error: &'a mut Result<(), E>,
+}
+
+impl<I, T, E> Iterator for DisgorgeError<'_, I, E>
+where
+    I: Iterator<Item = Result<T, E>>,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.error.as_ref().ok()?;
+
+        self.iterator
+            .next()?
+            .map_err(|err| {
+                *self.error = Err(err);
+            })
+            .ok()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        if self.error.is_err() {
+            (0, Some(0))
+        } else {
+            let (_, max) = self.iterator.size_hint();
+            (0, max)
+        }
+    }
+
+    fn count(self) -> usize {
+        self.iterator.filter(|item| item.is_ok()).count()
+    }
+
+    fn fold<B, F>(mut self, init: B, mut func: F) -> B
+    where
+        Self: Sized,
+        F: FnMut(B, Self::Item) -> B,
+    {
+        match *self.error {
+            Err(_) => init,
+            Ok(()) => match self.iterator.try_fold(init, |accum, item| match item {
+                Ok(item) => ControlFlow::Continue(func(accum, item)),
+                Err(err) => ControlFlow::Break((accum, err)),
+            }) {
+                ControlFlow::Continue(accum) => accum,
+                ControlFlow::Break((accum, err)) => {
+                    *self.error = Err(err);
+                    accum
+                }
+            },
+        }
+    }
+}
+
+pub type Definitely<T> = Result<T, Infallible>;

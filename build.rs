@@ -47,10 +47,7 @@ fn main() {
         .iter()
         .map(|day| {
             // HATE HATE HATE HATE
-            lazy_format!(
-                "#[path = \"../../../../../src/day{day}.rs\"] mod day{day};",
-                day = day
-            )
+            lazy_format!("#[path = \"../../../../../src/day{day}.rs\"] mod day{day};",)
         })
         .join_with(Newline);
 
@@ -69,9 +66,12 @@ fn main() {
         .flat_map(|&day| [(day, 1), (day, 2)])
         .map(|(day, part)| {
             lazy_format!(
-                "(Day::Day{day}, Part::Part{part}) => day{day}::part{part}(input)
-                    .map(|solution| println!(\"{{solution}}\"))
-                    .context(\"failed to solve day {day}, part {part}\"),
+                "(Day::Day{day}, Part::Part{part}) => input
+                    .try_into()
+                    .context(\"failed to parse input\")
+                    .and_then(|input| day{day}::part{part}(input).context(\"failed to compute solution after successful parse\"))
+                    .context(\"failed to solve day {day}, part {part}\")
+                    .map(|solution| println!(\"{{solution}}\")),
                 ",
             )
         })
@@ -93,18 +93,18 @@ fn main() {
                 let value: u8 = s.parse()?;
 
                 match value {{
-                  {match_arms}
-                  value => Err(DayError::BadDay(value)),
+                    {match_arms}
+                    value => Err(DayError::BadDay(value)),
                 }}
             }}
         }}
 
 
         fn run_solution(day: Day, part: Part, input: &str) -> anyhow::Result<()> {{
-          match (day, part) {{
-              {solver_match_arms}
-          }}
-      }}"
+            match (day, part) {{
+                {solver_match_arms}
+            }}
+        }}"
     );
 
     let output_path = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set in build.rs"));
