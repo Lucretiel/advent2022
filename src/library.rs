@@ -192,8 +192,7 @@ macro_rules! parser {
     ) => {
         move |input| -> nom::IResult<_, _, _> {
             $(
-                let mut parser = $parser;
-                let (input, value) = parser.parse(input)?;
+                let (input, value) = $parser.parse(input)?;
                 $(
                     let $bind = value;
                     let value = ();
