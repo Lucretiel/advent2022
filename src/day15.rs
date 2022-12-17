@@ -128,13 +128,38 @@ pub fn part1(input: Input) -> anyhow::Result<usize> {
 }
 
 pub fn part2(input: Input) -> anyhow::Result<isize> {
-    (0..=4_000_000)
-        .into_par_iter()
-        .map(Row)
-        .flat_map_iter(|row| {
-            (0..=4_000_000)
-                .map(Column)
-                .map(move |column| Location { row, column })
+    // Basic idea: we're guaranteed that there is only one possible location.
+    // This means that it lies on the edge of one of the beacons, so search
+    // the perimeters of each beacon
+    input
+        .signals
+        .par_iter()
+        .flat_map(|signal| {
+            let radius = signal.radius() + 1;
+            (0..radius)
+                .into_par_iter()
+                // Compute vectors resembling (4, 0), (3, 1), (2, 2), (1, 3)
+                .map(move |delta| Vector {
+                    rows: Rows(delta),
+                    columns: Columns(radius - delta),
+                })
+                // Get all 4 rotations of that vector
+                .flat_map_iter(|vector| {
+                    [
+                        vector,
+                        vector.clockwise(),
+                        vector.anticlockwise(),
+                        vector.reverse(),
+                    ]
+                })
+                // Add to the sensor to find the perimeter locations
+                .map(move |vector| signal.sensor + vector)
+        })
+        .filter(|location| {
+            0 <= location.row.0
+                && location.row.0 <= 4_000_000
+                && 0 <= location.column.0
+                && location.column.0 <= 4_000_000
         })
         .find_any(|&location| {
             input
@@ -143,5 +168,5 @@ pub fn part2(input: Input) -> anyhow::Result<isize> {
                 .all(|signal| (location - signal.sensor).manhattan_length() > signal.radius())
         })
         .context("no available beacon location")
-        .map(|beacon| beacon.row.0 * beacon.column.0)
+        .map(|beacon| beacon.column.0 * 4_000_000 + beacon.row.0)
 }
