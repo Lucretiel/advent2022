@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, convert::Infallible, hash::Hash, iter::FusedIterator, mem,
+    cmp::Reverse, collections::HashMap, convert::Infallible, hash::Hash, iter::FusedIterator, mem,
     ops::ControlFlow,
 };
 
@@ -30,6 +30,12 @@ impl<T: Hash + Eq> Counter<T> {
         }
     }
 
+    pub fn with_capacity(size: usize) -> Self {
+        Self {
+            counts: HashMap::with_capacity(size),
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.counts.len()
     }
@@ -44,6 +50,23 @@ impl<T: Hash + Eq> Counter<T> {
 
     pub fn add(&mut self, item: T, count: usize) {
         *self.counts.entry(item).or_insert(0) += count
+    }
+
+    pub fn top<const N: usize>(&self) -> Option<[(&T, usize); N]> {
+        let mut iter = self.counts.iter().map(|(key, &value)| (key, value));
+        let mut buffer = brownstone::build![iter.next()?];
+        buffer.sort_unstable_by_key(|&(_, count)| Reverse(count));
+
+        iter.for_each(|(item, count)| {
+            let Some(last) = buffer.last_mut() else { return };
+            if last.1 < count {
+                *last = (item, count);
+
+                buffer.sort_unstable_by_key(|&(_, count)| Reverse(count));
+            }
+        });
+
+        Some(buffer)
     }
 }
 

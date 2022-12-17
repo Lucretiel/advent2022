@@ -1,8 +1,12 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    convert::Infallible,
+    error::Error,
+    mem,
+    str::FromStr,
 };
 
+use anyhow::Context;
+use lazy_format::lazy_format;
 use nom::{
     branch::alt,
     character::complete::{digit1, line_ending, multispace0, space0, space1},
@@ -18,15 +22,24 @@ use nom_supreme::{
     ParserExt,
 };
 
-use crate::parser;
+use crate::{library::Counter, parser};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct Item(i64);
+struct Item(i128);
 
 #[derive(Debug, Clone, Copy)]
 enum Operand {
     Input,
-    Literal(i64),
+    Literal(i128),
+}
+
+impl Operand {
+    pub fn get(self, input: i128) -> i128 {
+        match self {
+            Operand::Input => input,
+            Operand::Literal(value) => value,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -42,9 +55,27 @@ struct Operation {
     second: Operand,
 }
 
+impl Operation {
+    fn apply(&self, input: i128) -> Option<i128> {
+        let first = self.first.get(input);
+        let second = self.second.get(input);
+
+        match self.op {
+            Operator::Plus => first.checked_add(second),
+            Operator::Times => first.checked_mul(second),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct DivisibilityTest {
-    divisor: i64,
+    divisor: i128,
+}
+
+impl DivisibilityTest {
+    pub fn apply(self, input: i128) -> bool {
+        input % self.divisor == 0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -63,7 +94,10 @@ struct MonkeySpec {
     preference: ThrowPreference,
 }
 
-fn parse_number(input: &str) -> IResult<&str, i64, ErrorTree<&str>> {
+fn parse_number<T: FromStr>(input: &str) -> IResult<&str, T, ErrorTree<&str>>
+where
+    T::Err: Error + Send + Sync + 'static,
+{
     digit1.parse_from_str_cut().parse(input)
 }
 
@@ -71,7 +105,7 @@ fn parse_item_set(input: &str) -> IResult<&str, Vec<Item>, ErrorTree<&str>> {
     collect_separated_terminated(
         parse_number.map(Item).context("item"),
         tag(",").delimited_by(space0),
-        line_ending,
+        line_ending.peek(),
     )
     .parse(input)
 }
@@ -137,18 +171,26 @@ fn parse_monkey(input: &str) -> IResult<&str, (MonkeyId, MonkeySpec, Vec<Item>),
         parse_monkey_line("Starting items", parse_item_set.context("item set"))
             .context("item line"),
         // Operation: new = old + s
-        parse_monkey_line("Operation", parse_operation.context("operation"))
-            .preceded_by(tag("new = "))
-            .context("operation line"),
+        parse_monkey_line(
+            "Operation",
+            parse_operation
+                .context("operation")
+                .preceded_by(tag("new = ")),
+        )
+        .context("operation line"),
         // Test: divisible by 10
-        parse_monkey_line("Test", parse_number.context("test divisor"))
-            .map(|divisor| DivisibilityTest { divisor })
-            .preceded_by(tag("divisible by "))
-            .context("test line"),
+        parse_monkey_line(
+            "Test",
+            parse_number
+                .context("test divisor")
+                .preceded_by(tag("divisible by ")),
+        )
+        .map(|divisor| DivisibilityTest { divisor })
+        .context("test line"),
         // If true: throw to monkey N
         parse_monkey_line("If true", parse_throw).context("if true line"),
         // If false: throw to monkey N
-        parse_monkey_line("If true", parse_throw).context("if false line"),
+        parse_monkey_line("If false", parse_throw).context("if false line"),
     ))
     .map(|(id, items, operation, test, if_true, if_false)| {
         (
@@ -193,10 +235,55 @@ impl TryFrom<&str> for Input {
     }
 }
 
-pub fn part1(input: Input) -> anyhow::Result<Infallible> {
-    anyhow::bail!("not implemented yet")
+#[inline]
+fn simulate_monkeys(mut input: Input, rounds: usize, div: bool) -> anyhow::Result<usize> {
+    let mut inspection_counts = Counter::with_capacity(input.specs.len());
+    let factor: i128 = input
+        .specs
+        .values()
+        .map(|spec| spec.test.divisor)
+        .try_fold(1i128, |accum, value| accum.checked_mul(value))
+        .context("overflow while calculating factor")?;
+
+    for _ in 0..rounds {
+        for (&id, spec) in &input.specs {
+            let items = mem::take(
+                input
+                    .collections
+                    .get_mut(&id)
+                    .context(lazy_format!("Monkey '{id:?}' has no items"))?,
+            );
+
+            inspection_counts.add(id, items.len());
+
+            for item in items {
+                let item = spec.operation.apply(item.0).context("overflow detected")?;
+                let item = if div { item / 3 } else { item % factor };
+                let target = if spec.test.apply(item) {
+                    spec.preference.if_true
+                } else {
+                    spec.preference.if_false
+                };
+                input
+                    .collections
+                    .get_mut(&target)
+                    .context(lazy_format!("Target monkey {target:?} doesn't exist"))?
+                    .push(Item(item));
+            }
+        }
+    }
+
+    let [(_, count1), (_, count2)] = inspection_counts
+        .top()
+        .context("less than 2 monkeys did any throwing")?;
+
+    Ok(count1 * count2)
 }
 
-pub fn part2(input: Input) -> anyhow::Result<Infallible> {
-    anyhow::bail!("not implemented yet")
+pub fn part1(input: Input) -> anyhow::Result<usize> {
+    simulate_monkeys(input, 20, true)
+}
+
+pub fn part2(input: Input) -> anyhow::Result<usize> {
+    simulate_monkeys(input, 10_000, false)
 }
