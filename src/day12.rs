@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    convert::Infallible,
-};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
 use gridly::prelude::*;
@@ -38,7 +35,6 @@ impl Site {
 pub struct Input {
     grid: VecGrid<Site>,
     origin: Location,
-    destination: Location,
 }
 
 impl TryFrom<&str> for Input {
@@ -70,19 +66,7 @@ impl TryFrom<&str> for Input {
             .map(|(location, _)| location)
             .context("no start site in grid")?;
 
-        let destination = grid
-            .rows()
-            .iter()
-            .flat_map(|row| row.iter_with_locations())
-            .find(|&(_, &site)| matches!(site, Site::End))
-            .map(|(location, _)| location)
-            .context("no start site in grid")?;
-
-        Ok(Input {
-            grid,
-            origin,
-            destination,
-        })
+        Ok(Input { grid, origin })
     }
 }
 

@@ -17,6 +17,7 @@ joinery = "3.1.0"
 lazy_format = "2.0.0"
 nom = "7.1.1"
 nom-supreme = "0.8.0"
+rayon = "1.6.1"
 thiserror = "1.0.37"
 
 [build-dependencies]
