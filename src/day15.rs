@@ -156,10 +156,8 @@ pub fn part2(input: Input) -> anyhow::Result<isize> {
                 .map(move |vector| signal.sensor + vector)
         })
         .filter(|location| {
-            0 <= location.row.0
-                && location.row.0 <= 4_000_000
-                && 0 <= location.column.0
-                && location.column.0 <= 4_000_000
+            let span = 0..=4_000_000;
+            span.contains(&location.row.0) && span.contains(&location.column.0)
         })
         .find_any(|&location| {
             input
